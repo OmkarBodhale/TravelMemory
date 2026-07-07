@@ -1,5 +1,6 @@
 import boto3
 import os
+import time
 
 # Initialize Boto3 clients
 region = 'ap-south-1'
@@ -8,7 +9,7 @@ ec2_client = boto3.client('ec2', region_name=region)
 ssm_client = boto3.client('ssm', region_name=region)
 
 print("1. Creating VPC and Subnets (256 Total IPs)...")
-# A /24 CIDR provides exactly 256 IPs. 
+# A /24 CIDR provides exactly 256 IPs.
 vpc = ec2.create_vpc(CidrBlock='10.0.0.0/24')
 vpc.create_tags(Tags=[{"Key": "Name", "Value": "TM-VPC"}])
 vpc.wait_until_available()
@@ -24,7 +25,7 @@ public_subnet.create_tags(Tags=[{"Key": "Name", "Value": "TM-Public-Subnet"}])
 private_subnet = ec2.create_subnet(CidrBlock='10.0.0.128/25', VpcId=vpc.id, AvailabilityZone=f'{region}b')
 private_subnet.create_tags(Tags=[{"Key": "Name", "Value": "TM-Private-Subnet"}])
 
-print("2. Configuring Internet Gateway & Routing...")
+print("2. Configuring Internet Gateway & Public Routing...")
 igw = ec2.create_internet_gateway()
 vpc.attach_internet_gateway(InternetGatewayId=igw.id)
 
@@ -32,7 +33,25 @@ public_route_table = vpc.create_route_table()
 public_route_table.create_route(DestinationCidrBlock='0.0.0.0/0', GatewayId=igw.id)
 public_route_table.associate_with_subnet(SubnetId=public_subnet.id)
 
-print("3. Setting up Security Groups...")
+print("3. Configuring NAT Gateway & Private Routing (This may take a minute)...")
+# Allocate Elastic IP for NAT Gateway
+eip = ec2_client.allocate_address(Domain='vpc')
+
+# Create NAT Gateway in the Public Subnet
+nat_gw = ec2_client.create_nat_gateway(SubnetId=public_subnet.id, AllocationId=eip['AllocationId'])
+
+# Wait for NAT Gateway to become available before routing traffic to it
+waiter = ec2_client.get_waiter('nat_gateway_available')
+
+# FIX: Access the ID inside the nested 'NatGateway' dictionary
+waiter.wait(NatGatewayIds=[nat_gw['NatGateway']['NatGatewayId']])
+
+# Create Private Route Table and route internet-bound traffic to the NAT Gateway
+private_route_table = vpc.create_route_table()
+private_route_table.create_route(DestinationCidrBlock='0.0.0.0/0', NatGatewayId=nat_gw['NatGateway']['NatGatewayId'])
+private_route_table.associate_with_subnet(SubnetId=private_subnet.id)
+
+print("4. Setting up Security Groups...")
 public_sg = ec2.create_security_group(GroupName='TM-public-sg', Description='Allow SSH', VpcId=vpc.id)
 public_sg.authorize_ingress(IpPermissions=[{'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]}])
 
@@ -40,7 +59,7 @@ public_sg.authorize_ingress(IpPermissions=[{'IpProtocol': 'tcp', 'FromPort': 22,
 private_sg = ec2.create_security_group(GroupName='TM-private-sg', Description='Allow SSH from Public', VpcId=vpc.id)
 private_sg.authorize_ingress(IpPermissions=[{'IpProtocol': 'tcp', 'FromPort': 22, 'ToPort': 22, 'UserIdGroupPairs': [{'GroupId': public_sg.group_id}]}])
 
-print("4. Creating a New SSH Key Pair...")
+print("5. Creating a New SSH Key Pair...")
 key_name = 'TM-ubuntu-2604-keypair'
 
 # Clean up local file if re-running the script
@@ -57,14 +76,14 @@ with open(f'{key_name}.pem', 'w') as key_file:
 # Secure the file so SSH doesn't reject it for being too open
 os.chmod(f'{key_name}.pem', 0o400) 
 
-print("5. Fetching Latest Ubuntu 26.04 LTS AMI...")
+print("6. Fetching Latest Ubuntu 26.04 LTS AMI...")
 ami_parameter = ssm_client.get_parameter(
     Name='/aws/service/canonical/ubuntu/server/resolute/stable/current/amd64/hvm/ebs-gp3/ami-id'
 )
 ubuntu_2604_ami = ami_parameter['Parameter']['Value']
 print(f"   Found AMI ID: {ubuntu_2604_ami}")
 
-print("6. Launching Instances (8GB gp3 storage)...")
+print("7. Launching Instances (8GB gp3 storage)...")
 # Storage Configuration
 block_device_mappings = [{
     'DeviceName': '/dev/sda1',
@@ -90,11 +109,11 @@ public_ec2 = ec2.create_instances(
     TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'Name', 'Value': 'TM-Frontend-01'}]}]
 )
 
-# Provision 2 Private EC2s
-private_ec2s = ec2.create_instances(
+# Provision Private EC2 - Backend
+private_ec2_backend = ec2.create_instances(
     ImageId=ubuntu_2604_ami,
     InstanceType='t2.micro',
-    MinCount=2, MaxCount=2,
+    MinCount=1, MaxCount=1,
     KeyName=key_name,
     NetworkInterfaces=[{
         'SubnetId': private_subnet.id,
@@ -105,8 +124,25 @@ private_ec2s = ec2.create_instances(
     TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'Name', 'Value': 'TM-Backend-01'}]}]
 )
 
+# Provision Private EC2 - Database
+private_ec2_db = ec2.create_instances(
+    ImageId=ubuntu_2604_ami,
+    InstanceType='t2.micro',
+    MinCount=1, MaxCount=1,
+    KeyName=key_name,
+    NetworkInterfaces=[{
+        'SubnetId': private_subnet.id,
+        'DeviceIndex': 0,
+        'Groups': [private_sg.group_id]
+    }],
+    BlockDeviceMappings=block_device_mappings,
+    TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'Name', 'Value': 'TM-Database'}]}]
+)
+
 print("\n--- Infrastructure Provisioned ---")
 print(f"VPC ID: {vpc.id}")
-print(f"Public Instance ID: {public_ec2[0].id}")
-print(f"Private Instance IDs: {private_ec2s[0].id}, {private_ec2s[1].id}")
+print(f"NAT Gateway ID: {nat_gw['NatGateway']['NatGatewayId']}")
+print(f"Public Instance ID (TM-Frontend-01): {public_ec2[0].id}")
+print(f"Private Instance ID (TM-Backend-01): {private_ec2_backend[0].id}")
+print(f"Private Instance ID (TM-Database): {private_ec2_db[0].id}")
 print(f"Use '{key_name}.pem' to SSH into the Public Instance.")
