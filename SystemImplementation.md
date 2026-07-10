@@ -2,42 +2,10 @@
 
 End-to-end guide for deploying the [TravelMemory](https://github.com/OmkarBodhale/TravelMemory.git) MERN-stack app (Node/Express backend + React frontend + MongoDB) on AWS EC2, with Nginx reverse proxy, a load balancer across multiple instances, and a custom domain via Cloudflare.
 
-> **Scope note:** This document covers infrastructure, configuration, and deployment steps. 
-
----
+> **Scope note:** This document covers infrastructure, configuration, and deployment steps. whole application is setup using mongo atlas 
 
 ## Architecture Overview
-
-```
-                                   ┌─────────────────────┐
-                                   │      Cloudflare      │
-                                   │  DNS + Proxy (CDN)   │
-                                   └──────────┬───────────┘
-                     CNAME (app.yourdomain.com)   A record (www/root -> frontend EC2 IP)
-                                   │
-                       ┌───────────┴────────────┐
-                       │   AWS Load Balancer     │
-                       │   (ALB / ELB)           │
-                       └───┬─────────────────┬───┘
-                           │                 │
-                 ┌─────────▼──────┐ ┌────────▼─────────┐
-                 │  EC2 Instance 1 │ │  EC2 Instance 2   │
-                 │  Nginx (proxy)  │ │  Nginx (proxy)    │
-                 │  ├─ Frontend    │ │  ├─ Frontend      │
-                 │  │  (React,     │ │  │  (React,       │
-                 │  │  served on   │ │  │  served on     │
-                 │  │  port 3000)  │ │  │  port 3000)    │
-                 │  └─ Backend     │ │  └─ Backend       │
-                 │     (Node.js,   │ │     (Node.js,     │
-                 │     PM2, :3001) │ │     PM2, :3001)   │
-                 └────────┬────────┘ └────────┬──────────┘
-                          │                    │
-                          └─────────┬──────────┘
-                                    │
-                          ┌─────────▼─────────┐
-                          │   MongoDB Atlas    │
-                          │  (managed cluster) │
-                          └────────────────────┘
+ <img width="877" height="757" alt="image" src="https://github.com/user-attachments/assets/51822072-8d2b-4ac8-9d32-0a724b3d7e2b" />
 
 ## Prerequisites
 
@@ -107,6 +75,8 @@ Aim here is to create VPC network with Public EC2 Instance Creation along with a
    PORT=3000
    ```
    <img width="1617" height="270" alt="Screenshot 2026-07-10 005953" src="https://github.com/user-attachments/assets/a646081d-1649-4a7c-9fa6-e9aa2accc356" />
+   <img width="1852" height="857" alt="image" src="https://github.com/user-attachments/assets/ee798c31-41fd-44ad-9a55-bca0386af780" />
+
    > Currently backend implementation consumes 3001 port, Just make sure the `PORT` value here matches the `proxy_pass` port in the Nginx config below.
 
 3. Execute Docker file to create backend app Docker Image:
@@ -244,12 +214,17 @@ sudo systemctl restart nginx
 4. Update the **Security Groups**:
    - ALB's security group: allow inbound 80/443 from `0.0.0.0/0`
    - EC2 instances' security group: allow inbound 80 **only from the ALB's security group** (tighter than opening to the world)
-<img width="1592" height="710" alt="image" src="https://github.com/user-attachments/assets/ed67b94b-1930-4408-b0e4-bc9a56a86fdb" />
+  <img width="1592" height="710" alt="image" src="https://github.com/user-attachments/assets/ed67b94b-1930-4408-b0e4-bc9a56a86fdb" />
+
+   ##   Site ruing on load balancer URL
+<img width="1917" height="961" alt="image" src="https://github.com/user-attachments/assets/52e13d01-9e64-4ea9-b6d0-849f7235e60b" />
+
 
 5. Test the load balancer directly using its DNS name before wiring up Cloudflare:
    ```bash
    curl http://<alb-dns-name>
    ```
+   
 <img width="1907" height="1015" alt="image" src="https://github.com/user-attachments/assets/20c1a7ae-9622-4cfe-8825-29a335e0043a" />
 
 ## 6. Verification Checklist
