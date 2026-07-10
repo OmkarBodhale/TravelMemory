@@ -26,10 +26,10 @@ End-to-end guide for deploying the [TravelMemory](https://github.com/OmkarBodhal
                  │  ├─ Frontend    │ │  ├─ Frontend      │
                  │  │  (React,     │ │  │  (React,       │
                  │  │  served on   │ │  │  served on     │
-                 │  │  port 80)    │ │  │  port 80)      │
+                 │  │  port 3000)  │ │  │  port 3000)    │
                  │  └─ Backend     │ │  └─ Backend       │
                  │     (Node.js,   │ │     (Node.js,     │
-                 │     PM2, :3000) │ │     PM2, :3000)   │
+                 │     PM2, :3001) │ │     PM2, :3001)   │
                  └────────┬────────┘ └────────┬──────────┘
                           │                    │
                           └─────────┬──────────┘
@@ -38,11 +38,6 @@ End-to-end guide for deploying the [TravelMemory](https://github.com/OmkarBodhal
                           │   MongoDB Atlas    │
                           │  (managed cluster) │
                           └────────────────────┘
-```
-
-`[ADD SCREENSHOT: draw.io diagram exported as PNG — build this using diagrams.net (draw.io) with the components above: Cloudflare → Load Balancer → EC2 instances (Nginx + Node + React) → MongoDB Atlas]`
-
----
 
 ## Prerequisites
 
@@ -172,7 +167,6 @@ sudo systemctl restart nginx
 <img width="1607" height="197" alt="image" src="https://github.com/user-attachments/assets/e9bd8165-3272-495f-bc04-68e3ff38fa01" />
 <img width="1615" height="517" alt="image" src="https://github.com/user-attachments/assets/1198a65c-7f18-4589-94c0-eae2763ee063" />
 
-
 ---
 
 ## 3. Frontend Configuration and Backend Connection
@@ -198,7 +192,6 @@ sudo systemctl restart nginx
 ## Application setup working from nginx reverse proxy
 <img width="1917" height="962" alt="image" src="https://github.com/user-attachments/assets/608ee397-d88f-4f56-8237-472a5c012b37" />
 
-
 ## 4. Scaling: Multiple Instances + Load Balancer
 
 1. **Repeat Steps 1–3** on a second EC2 instance (or use an AMI/snapshot of the first instance to speed this up: *Actions → Image and templates → Create image*, then launch a new instance from that AMI).
@@ -207,6 +200,7 @@ sudo systemctl restart nginx
 
 2. Create Second EC2 instance using the above AMI image.
    <img width="1895" height="820" alt="image" src="https://github.com/user-attachments/assets/3a9e8c42-252e-47ba-854b-75e9c8334c1a" />
+   
 3. Setup the second EC2 Instance
    ```bash
    sudo docker images
@@ -216,6 +210,7 @@ sudo systemctl restart nginx
    sudo docker ps -a              #Reconfirm Containers running status
    ```
    <img width="1907" height="392" alt="image" src="https://github.com/user-attachments/assets/903fe013-97dc-4f25-b8a3-3a3bb5d90b90" />
+   
 4. Now lets setup the travel memory frontend .env file
    ```bash
     sudo docker exec -it tmfec bash         #this will allow us to open the frontend application docker to ipen in interactive mode
@@ -228,7 +223,6 @@ sudo systemctl restart nginx
    <img width="1902" height="565" alt="image" src="https://github.com/user-attachments/assets/78f18932-6917-4d71-9961-f465542a169a" />
    <img width="1917" height="87" alt="image" src="https://github.com/user-attachments/assets/2e310037-0bb5-4276-9a51-b9badde8a621" />
 
-
 6. **Create a Target Group** (AWS Console → EC2 → Target Groups):
    - Target type: Instances
    - Protocol/Port: HTTP / 80
@@ -237,7 +231,6 @@ sudo systemctl restart nginx
  <img width="1901" height="822" alt="image" src="https://github.com/user-attachments/assets/687d396e-d40f-44ed-8557-453882014063" />
  <img width="1905" height="537" alt="image" src="https://github.com/user-attachments/assets/9bb7a91f-0917-449f-9f68-af3f7ac390e5" />
  <img width="1892" height="820" alt="image" src="https://github.com/user-attachments/assets/4e31677e-31b1-4c47-9416-e29fa9f5223e" />
-
 
 3. **Create an Application Load Balancer (ALB)**:
    - Scheme: internet-facing
@@ -248,47 +241,16 @@ sudo systemctl restart nginx
 <img width="1896" height="822" alt="image" src="https://github.com/user-attachments/assets/3a19dea5-752c-4f32-9d6d-2d1c7a676ceb" />
 <img width="1592" height="305" alt="image" src="https://github.com/user-attachments/assets/36b31464-bb1b-4c77-b5ef-6412861ab38a" />
 
-
 4. Update the **Security Groups**:
    - ALB's security group: allow inbound 80/443 from `0.0.0.0/0`
    - EC2 instances' security group: allow inbound 80 **only from the ALB's security group** (tighter than opening to the world)
-<img width="1612" height="612" alt="image" src="https://github.com/user-attachments/assets/ab4cdf32-a5dd-4ad2-a905-a443be2bb39d" />
+<img width="1592" height="710" alt="image" src="https://github.com/user-attachments/assets/ed67b94b-1930-4408-b0e4-bc9a56a86fdb" />
 
 5. Test the load balancer directly using its DNS name before wiring up Cloudflare:
    ```bash
    curl http://<alb-dns-name>
    ```
-
----
-
-## 5. Custom Domain via Cloudflare
-
-1. In the Cloudflare dashboard, select your domain → **DNS** → **Add record**.
-
-2. **CNAME record** — point your app subdomain at the load balancer:
-   | Type  | Name | Target                                   | Proxy status |
-   |-------|------|-------------------------------------------|--------------|
-   | CNAME | app  | `<alb-dns-name>.elb.amazonaws.com`        | Proxied      |
-
-3. **A record** — point the root/frontend host at the EC2 instance's public IP (per the task spec; typically used if you're serving the frontend from a specific instance rather than exclusively through the ALB):
-   | Type | Name | Target                  | Proxy status |
-   |------|------|--------------------------|--------------|
-   | A    | @    | `<frontend-EC2-public-IP>` | Proxied    |
-
-   > Note: AWS ALB IPs can change, which is why the ALB is referenced via **CNAME** (resolves dynamically) rather than a static A record. Use a static **Elastic IP** on the EC2 instance if you want a stable A record target.
-
-`[ADD SCREENSHOT: Cloudflare DNS records page showing both the CNAME and A record]`
-
-4. Update frontend/backend env vars (Task 2) to use the final domain, rebuild, and redeploy:
-   ```
-   REACT_APP_BACKEND_URL=https://app.yourdomain.com
-   ```
-
-5. (Recommended) Set Cloudflare SSL/TLS mode to **Full** or **Full (strict)**, and enable **Always Use HTTPS** under SSL/TLS → Edge Certificates.
-
-`[ADD SCREENSHOT: site loading over https://app.yourdomain.com in the browser with a valid padlock]`
-
----
+<img width="1907" height="1015" alt="image" src="https://github.com/user-attachments/assets/20c1a7ae-9622-4cfe-8825-29a335e0043a" />
 
 ## 6. Verification Checklist
 
@@ -300,24 +262,3 @@ sudo systemctl restart nginx
 - [ ] Cloudflare CNAME resolves to the Load Balancer
 - [ ] Cloudflare A record resolves to the frontend EC2 IP
 - [ ] Custom domain loads the app over HTTPS
-- [ ] Creating a trip via the UI persists to MongoDB and appears on reload
-
----
-
-## Troubleshooting Notes
-
-| Symptom | Likely Cause | Fix |
-|---|---|---|
-| Frontend loads but no data | `url.js` / `REACT_APP_BACKEND_URL` pointing at wrong host/port | Rebuild frontend after correcting the URL |
-| 502 Bad Gateway from Nginx | Backend not running or wrong `proxy_pass` port | `pm2 status`, confirm `.env` `PORT` matches Nginx config |
-| ALB target "unhealthy" | Security group blocking ALB → instance traffic, or Nginx not running | Check SG rules, `sudo systemctl status nginx` |
-| Domain not resolving | DNS not yet propagated, or wrong record type | Wait a few minutes; verify record type/target in Cloudflare |
-| CORS errors in browser console | Backend not allowing frontend's origin | Add/update CORS middleware in Express backend for your domain |
-
----
-
-1. Add shapes for: Cloudflare (DNS/CDN icon), Load Balancer, 2× EC2 instances (each containing Nginx, React build, Node/PM2), MongoDB Atlas.
-2. Draw directional arrows: User → Cloudflare → Load Balancer → EC2 instances → MongoDB.
-3. Export as PNG/SVG and embed it here in place of the ASCII diagram, and also attach the `.drawio` source file for reproducibility.
-
-`[ADD FILE: architecture-diagram.drawio and exported architecture-diagram.png]`
