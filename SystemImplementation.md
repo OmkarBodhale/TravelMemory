@@ -202,14 +202,42 @@ sudo systemctl restart nginx
 ## 4. Scaling: Multiple Instances + Load Balancer
 
 1. **Repeat Steps 1–3** on a second EC2 instance (or use an AMI/snapshot of the first instance to speed this up: *Actions → Image and templates → Create image*, then launch a new instance from that AMI).
+   ## AMI image created using above implemented setup 
+<img width="1596" height="715" alt="image" src="https://github.com/user-attachments/assets/26e7e3ff-b91a-4318-af76-10f0262cdae1" />
 
-2. **Create a Target Group** (AWS Console → EC2 → Target Groups):
+2. Create Second EC2 instance using the above AMI image.
+   <img width="1895" height="820" alt="image" src="https://github.com/user-attachments/assets/3a9e8c42-252e-47ba-854b-75e9c8334c1a" />
+3. Setup the second EC2 Instance
+   ```bash
+   sudo docker images
+   sudo docker ps -a              #Shows all the avaliable Containers and its current status
+   sudo docker start tmbec
+   sudo docker start tmfec
+   sudo docker ps -a              #Reconfirm Containers running status
+   ```
+   <img width="1907" height="392" alt="image" src="https://github.com/user-attachments/assets/903fe013-97dc-4f25-b8a3-3a3bb5d90b90" />
+4. Now lets setup the travel memory frontend .env file
+   ```bash
+    sudo docker exec -it tmfec bash         #this will allow us to open the frontend application docker to ipen in interactive mode
+   ls
+   apt-get update
+   apt-get upgrade
+   apt install nano                         #open the .env to update backend url
+   nano .env
+   ```
+   <img width="1902" height="565" alt="image" src="https://github.com/user-attachments/assets/78f18932-6917-4d71-9961-f465542a169a" />
+   <img width="1917" height="87" alt="image" src="https://github.com/user-attachments/assets/2e310037-0bb5-4276-9a51-b9badde8a621" />
+
+
+6. **Create a Target Group** (AWS Console → EC2 → Target Groups):
    - Target type: Instances
    - Protocol/Port: HTTP / 80
    - Register both EC2 instances as targets
    - Health check path: `/` (or a lightweight health endpoint if you add one)
+ <img width="1901" height="822" alt="image" src="https://github.com/user-attachments/assets/687d396e-d40f-44ed-8557-453882014063" />
+ <img width="1905" height="537" alt="image" src="https://github.com/user-attachments/assets/9bb7a91f-0917-449f-9f68-af3f7ac390e5" />
+ <img width="1892" height="820" alt="image" src="https://github.com/user-attachments/assets/4e31677e-31b1-4c47-9416-e29fa9f5223e" />
 
-`[ADD SCREENSHOT: Target Group registered targets showing both instances "healthy"]`
 
 3. **Create an Application Load Balancer (ALB)**:
    - Scheme: internet-facing
@@ -217,11 +245,14 @@ sudo systemctl restart nginx
    - Availability Zones: select subnets covering both instances
    - Attach the Target Group created above
 
-`[ADD SCREENSHOT: ALB summary page with DNS name, e.g. travelmemory-alb-123456.us-east-1.elb.amazonaws.com]`
+<img width="1896" height="822" alt="image" src="https://github.com/user-attachments/assets/3a19dea5-752c-4f32-9d6d-2d1c7a676ceb" />
+<img width="1592" height="305" alt="image" src="https://github.com/user-attachments/assets/36b31464-bb1b-4c77-b5ef-6412861ab38a" />
+
 
 4. Update the **Security Groups**:
    - ALB's security group: allow inbound 80/443 from `0.0.0.0/0`
    - EC2 instances' security group: allow inbound 80 **only from the ALB's security group** (tighter than opening to the world)
+<img width="1612" height="612" alt="image" src="https://github.com/user-attachments/assets/ab4cdf32-a5dd-4ad2-a905-a443be2bb39d" />
 
 5. Test the load balancer directly using its DNS name before wiring up Cloudflare:
    ```bash
@@ -262,7 +293,7 @@ sudo systemctl restart nginx
 ## 6. Verification Checklist
 
 - [ ] Backend responds on `http://localhost:3000` on each instance
-- [ ] Nginx reverse proxy serves frontend + proxies `/api/` to backend
+- [ ] Nginx reverse proxy serves frontend + proxies `/trip/` to backend
 - [ ] Frontend `url.js` / `.env` points to the correct backend URL
 - [ ] Both EC2 instances registered and **healthy** in the Target Group
 - [ ] Load Balancer DNS name serves the app and round-robins between instances
